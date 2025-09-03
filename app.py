@@ -59,13 +59,30 @@ def get_marker_color(progress):
 # ======================
 # 2. Map
 # ======================
+# ======================
+# 2. Map (using ESRI tiles)
+# ======================
 m = folium.Map(
-    location=[df["X"].mean(), df["Y"].mean()],  # X = lat, Y = lon
+    location=[df["X"].mean(), df["Y"].mean()],  # X = latitude, Y = longitude
     zoom_start=12,
-    tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attr="© OpenStreetMap contributors"
+    tiles=None
 )
 
+# Add ESRI basemap
+folium.TileLayer(
+    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
+    name="Esri World Imagery"
+).add_to(m)
+
+# Optionally also add another basemap
+folium.TileLayer(
+    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+    attr="Tiles © Esri — Source: Esri, DeLorme, NAVTEQ",
+    name="Esri World Street Map"
+).add_to(m)
+
+# Add marker points
 for i, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
         popup_html = f"""
@@ -77,7 +94,7 @@ for i, row in df.iterrows():
         Progress Control: {row.get('Progress Control', 0):.2f}%
         """
         folium.CircleMarker(
-            location=[row["X"], row["Y"]],  # lat, lon
+            location=[row["X"], row["Y"]],  # [lat, lon]
             radius=7,
             color=get_marker_color(row["Progress Control"]),
             fill=True,
@@ -85,33 +102,15 @@ for i, row in df.iterrows():
             popup=folium.Popup(popup_html, max_width=300),
         ).add_to(m)
 
+# Add layer control to switch basemaps
+folium.LayerControl().add_to(m)
+
 # Add legend
-legend_html = """
-<div style="
-    position: fixed; 
-    bottom: 50px; left: 50px; width: 160px; 
-    background-color: rgba(255,255,255,0.9);
-    border: 1px solid grey; 
-    z-index: 9999; 
-    font-size: 13px;
-    padding: 8px;
-    color: black;
-    border-radius: 5px;
-    ">
-    <b style="font-size:14px;">Progress Legend</b><br>
-    <div style="margin-top:4px; line-height: 18px;">
-        <span style="background:#FF0000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>0–24%<br>
-        <span style="background:#FF8000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>25–49%<br>
-        <span style="background:#FFD700; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>50–74%<br>
-        <span style="background:#7CBE19; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>75–99%<br>
-        <span style="background:#145214; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>100%<br>
-    </div>
-</div>
-"""
 m.get_root().html.add_child(folium.Element(legend_html))
 
-# Render map
-st_folium(m, width=800, height=600)
+# Render
+st_folium(m, width=600, height=600)
+
 
 # ======================
 # 3. User input section
@@ -153,3 +152,4 @@ if selected_kelompok:
 # ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
+
