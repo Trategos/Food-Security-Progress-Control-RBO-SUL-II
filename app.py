@@ -20,29 +20,27 @@ sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")  # fix newl
 creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
 client = gspread.authorize(creds)
 
-# Ganti dengan ID Google Sheet kamu
-SHEET_ID = "1hhr1KjWSAU49wJQhcH_3Js_N8-VQA0WX2fZoGhs3m0w"  
+# ID Google Sheet
+SHEET_ID = "1hhr1KjWSAU49wJQhcH_3Js_N8-VQA0WX2fZoGhs3m0w"
 worksheet = client.open_by_key(SHEET_ID).sheet1
 
-# Load data dari sheet ke DataFrame
+# Load data dari sheet
 data = worksheet.get_all_records()
 df = pd.DataFrame(data)
 df.columns = df.columns.str.strip()
 
 # Pastikan numeric coords
-df["X"] = pd.to_numeric(df["X"], errors="coerce")
-df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
+df["X"] = pd.to_numeric(df["X"], errors="coerce")  # latitude
+df["Y"] = pd.to_numeric(df["Y"], errors="coerce")  # longitude
 
 # Tambahkan kolom bila belum ada
-for col, default in [("Panjang Aktual", 0), ("Uang Terserap", 0), ("Progress Control", 0.0)]:
+for col, default in [("Panjang Aktual", 0.0), ("Uang Terserap", 0.0), ("Progress Control", 0.0)]:
     if col not in df.columns:
         df[col] = default
 
-# ======================
-# 1. Hitung Progress
-# ======================
+# Hitung progress berdasarkan Panjang Aktual / Usulan Panjang
 df["Progress Control"] = (
-    df["Panjang Aktual"] / df["Usulan Panjang (m)"].replace(0, 1)
+    df["Panjang Aktual"].astype(float) / df["Usulan Panjang (m)"].replace(0, 1).astype(float)
 ) * 100
 
 # ======================
@@ -50,20 +48,27 @@ df["Progress Control"] = (
 # ======================
 def get_marker_color(progress: float) -> str:
     if progress < 25:
-        return "#FF0000"
+        return "#FF0000"  # red
     elif progress < 50:
-        return "#FF8000"
+        return "#FF8000"  # orange
     elif progress < 75:
-        return "#FFD700"
+        return "#FFD700"  # yellow
     elif progress < 100:
-        return "#7CBE19"
+        return "#7CBE19"  # light green
     else:
-        return "#145214"
+        return "#145214"  # dark green
 
 # ======================
 # 3. Peta Folium
 # ======================
-m = folium.Map(location=[df["X"].mean(), df["Y"].mean()], zoom_start=12, tiles="OpenStreetMap")
+# Handle jika koordinat kosong
+if df["X"].notnull().any() and df["Y"].notnull().any():
+    center_lat = df["X"].mean()
+    center_lon = df["Y"].mean()
+else:
+    center_lat, center_lon = -0.5, 117.0  # default center Indonesia
+
+m = folium.Map(location=[center_lat, center_lon], zoom_start=12, tiles="OpenStreetMap")
 
 for _, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
@@ -120,13 +125,8 @@ if selected_kelompok:
     st.info(f"Progress Control: {df.loc[idx, 'Progress Control']:.2f}%")
 
     # Editable inputs
-    panjang_aktual = st.number_input("Panjang Aktual (m)", value=float(df.loc[idx, "Panjang Aktual"]), 
-    step=0.1)
-    uang_terserap = st.number_input(
-    "Uang Terserap", 
-    value=float(df.loc[idx, "Uang Terserap"]), 
-    step=1000.0  # misalnya step 1000 untuk rupiah
-    )
+    panjang_aktual = st.number_input("Panjang Aktual (m)", value=float(df.loc[idx, "Panjang Aktual"]), step=0.1)
+    uang_terserap = st.number_input("Uang Terserap", value=float(df.loc[idx, "Uang Terserap"]), step=1000.0)
 
     if st.button("Simpan Perubahan"):
         df.loc[idx, "Panjang Aktual"] = panjang_aktual
@@ -136,8 +136,14 @@ if selected_kelompok:
             if df.loc[idx, "Usulan Panjang (m)"] > 0 else 0
         )
 
-        # Simpan balik ke Google Sheets
-        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+        # ======================
+        # Update hanya 1 baris
+        # ======================
+        row_number = idx + 2  # +2 karena row 1 = header, index 0 = row 2
+        worksheet.update_cell(row_number, df.columns.get_loc("Panjang Aktual")+1, str(panjang_aktual))
+        worksheet.update_cell(row_number, df.columns.get_loc("Uang Terserap")+1, str(uang_terserap))
+        worksheet.update_cell(row_number, df.columns.get_loc("Progress Control")+1, str(df.loc[idx, "Progress Control"]))
+
         st.success(f"Data untuk kelompok '{selected_kelompok}' berhasil diperbarui!")
 
 # ======================
