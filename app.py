@@ -22,7 +22,7 @@ client = gspread.authorize(creds)
 SHEET_ID = "1hhr1KjWSAU49wJQhcH_3Js_N8-VQA0WX2fZoGhs3m0w"
 worksheet = client.open_by_key(SHEET_ID).sheet1
 
-# Load data dari sheet
+# Load data
 data = worksheet.get_all_records()
 df = pd.DataFrame(data)
 df.columns = df.columns.str.strip()
@@ -55,46 +55,87 @@ def get_marker_color(progress):
         return "#145214"  # dark green
 
 # ======================
-# 2. Map with ESRI Basemaps
+# 2. User input section
+# ======================
+st.write("### Update Data")
+kelompok_list = df["NAMA KELOMPOK"].dropna().unique().tolist()
+selected_kelompok = st.selectbox("Pilih NAMA KELOMPOK", options=kelompok_list)
+
+# Default center map on mean
+map_center = [df["X"].mean(), df["Y"].mean()]
+map_zoom = 12
+
+# If a Kelompok selected, center map on its location
+if selected_kelompok:
+    idx = df[df["NAMA KELOMPOK"] == selected_kelompok].index[0]
+    if pd.notnull(df.loc[idx, "X"]) and pd.notnull(df.loc[idx, "Y"]):
+        map_center = [df.loc[idx, "X"], df.loc[idx, "Y"]]
+        map_zoom = 16  # zoom in more closely
+
+    # Non-editable info
+    st.info(f"Usulan Panjang (m): {df.loc[idx, 'Usulan Panjang (m)']}")
+    st.info(f"Kebutuhan Anggaran: {df.loc[idx, 'KEBUTUHAN ANGGARAN']}")
+    st.info(f"Progress Control: {df.loc[idx, 'Progress Control']:.2f}%")
+
+    # Editable inputs
+    panjang_aktual = st.number_input("Panjang Aktual (m)", value=float(df.loc[idx, "Panjang Aktual"]), step=0.1)
+    uang_terserap = st.number_input("Uang Terserap", value=float(df.loc[idx, "Uang Terserap"]), step=1000.0)
+
+    if st.button("Simpan Perubahan"):
+        df.loc[idx, "Panjang Aktual"] = panjang_aktual
+        df.loc[idx, "Uang Terserap"] = uang_terserap
+        df.loc[idx, "Progress Control"] = (
+            (panjang_aktual / df.loc[idx, "Usulan Panjang (m)"]) * 100
+            if df.loc[idx, "Usulan Panjang (m)"] > 0 else 0
+        )
+
+        # Update Google Sheets row
+        row_number = idx + 2
+        worksheet.update_cell(row_number, df.columns.get_loc("Panjang Aktual") + 1, str(panjang_aktual))
+        worksheet.update_cell(row_number, df.columns.get_loc("Uang Terserap") + 1, str(uang_terserap))
+        worksheet.update_cell(row_number, df.columns.get_loc("Progress Control") + 1, str(df.loc[idx, "Progress Control"]))
+
+        st.success(f"Data untuk kelompok '{selected_kelompok}' berhasil diperbarui!")
+
+# ======================
+# 3. Map (OpenStreetMap)
 # ======================
 m = folium.Map(
-    location=[df["X"].mean(), df["Y"].mean()],  # X = latitude, Y = longitude
-    zoom_start=12,
-    tiles=None
+    location=map_center,
+    zoom_start=map_zoom,
+    tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attr="© OpenStreetMap contributors"
 )
 
-# Add ESRI basemaps
-folium.TileLayer(
-    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
-    name="Esri World Imagery"
-).add_to(m)
-
-folium.TileLayer(
-    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-    attr="Tiles © Esri — Source: Esri, DeLorme, NAVTEQ",
-    name="Esri World Street Map"
-).add_to(m)
+bounds = []  # collect all marker coordinates
 
 # Add markers
 for i, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
+        gmaps_url = f"https://www.google.com/maps?q={row['X']},{row['Y']}"
         popup_html = f"""
         <b>Kelompok:</b> {row.get('NAMA KELOMPOK', i)}<br>
         Usulan Panjang (m): {row.get('Usulan Panjang (m)', 0)}<br>
         Kebutuhan Anggaran: {row.get('KEBUTUHAN ANGGARAN', 0)}<br>
         Panjang Aktual: {row.get('Panjang Aktual', 0)}<br>
         Uang Terserap: {row.get('Uang Terserap', 0)}<br>
-        Progress Control: {row.get('Progress Control', 0):.2f}%
+        Progress Control: {row.get('Progress Control', 0):.2f}%<br>
+        <a href="{gmaps_url}" target="_blank">📍 Open in Google Maps</a>
         """
         folium.CircleMarker(
-            location=[row["X"], row["Y"]],  # [lat, lon]
+            location=[row["X"], row["Y"]],
             radius=7,
             color=get_marker_color(row["Progress Control"]),
             fill=True,
             fill_color=get_marker_color(row["Progress Control"]),
             popup=folium.Popup(popup_html, max_width=300),
         ).add_to(m)
+
+        bounds.append((row["X"], row["Y"]))
+
+# Auto-fit to all markers if no kelompok selected
+if not selected_kelompok and bounds:
+    m.fit_bounds(bounds)
 
 # Add legend
 legend_html = """
@@ -121,50 +162,8 @@ legend_html = """
 """
 m.get_root().html.add_child(folium.Element(legend_html))
 
-# Add layer control
-folium.LayerControl().add_to(m)
-
 # Render map
-st_data = st_folium(m, width=800, height=600)
-
-# Quick coordinate preview
-st.write("### Sample Coordinates (first 5 rows)")
-st.dataframe(df[["NAMA KELOMPOK", "X", "Y"]].head())
-
-# ======================
-# 3. User input section
-# ======================
-st.write("### Update Data")
-kelompok_list = df["NAMA KELOMPOK"].dropna().unique().tolist()
-selected_kelompok = st.selectbox("Pilih NAMA KELOMPOK", options=kelompok_list)
-
-if selected_kelompok:
-    idx = df[df["NAMA KELOMPOK"] == selected_kelompok].index[0]
-
-    # Non-editable info
-    st.info(f"Usulan Panjang (m): {df.loc[idx, 'Usulan Panjang (m)']}")
-    st.info(f"Kebutuhan Anggaran: {df.loc[idx, 'KEBUTUHAN ANGGARAN']}")
-    st.info(f"Progress Control: {df.loc[idx, 'Progress Control']:.2f}%")
-
-    # Editable inputs
-    panjang_aktual = st.number_input("Panjang Aktual (m)", value=float(df.loc[idx, "Panjang Aktual"]), step=0.1)
-    uang_terserap = st.number_input("Uang Terserap", value=float(df.loc[idx, "Uang Terserap"]), step=1000.0)
-
-    if st.button("Simpan Perubahan"):
-        df.loc[idx, "Panjang Aktual"] = panjang_aktual
-        df.loc[idx, "Uang Terserap"] = uang_terserap
-        df.loc[idx, "Progress Control"] = (
-            (panjang_aktual / df.loc[idx, "Usulan Panjang (m)"]) * 100
-            if df.loc[idx, "Usulan Panjang (m)"] > 0 else 0
-        )
-
-        # Update only relevant row in Google Sheets
-        row_number = idx + 2
-        worksheet.update_cell(row_number, df.columns.get_loc("Panjang Aktual") + 1, str(panjang_aktual))
-        worksheet.update_cell(row_number, df.columns.get_loc("Uang Terserap") + 1, str(uang_terserap))
-        worksheet.update_cell(row_number, df.columns.get_loc("Progress Control") + 1, str(df.loc[idx, "Progress Control"]))
-
-        st.success(f"Data untuk kelompok '{selected_kelompok}' berhasil diperbarui!")
+st_data = st_folium(m, width=600, height=600)
 
 # ======================
 # 4. Show Data
