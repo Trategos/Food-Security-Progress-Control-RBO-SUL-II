@@ -60,14 +60,14 @@ def get_marker_color(progress):
 # 2. Map (pakai script asli)
 # ======================
 m = folium.Map(
-    location=[df["Y"].mean(), df["X"].mean()],
+    location=[df["X"].mean(), df["Y"].mean()],
     zoom_start=12,
     tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attr="© OpenStreetMap contributors"
 )
 
 for i, row in df.iterrows():
-    if pd.notnull(row["Y"]) and pd.notnull(row["X"]):
+    if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
         popup_html = f"""
         <b>Kelompok:</b> {row['NAMA KELOMPOK'] if 'NAMA KELOMPOK' in df.columns else i}<br>
         Usulan Panjang (m): {row.get('Usulan Panjang (m)', 0)}<br>
@@ -77,7 +77,7 @@ for i, row in df.iterrows():
         Progress Control: {row.get('Progress Control', 0):.2f}%
         """
         folium.CircleMarker(
-            location=[row["Y"], row["X"]],
+            location=[row["X"], row["Y"]],
             radius=7,
             color=get_marker_color(row["Progress Control"]),
             fill=True,
@@ -153,4 +153,5 @@ if selected_kelompok:
 # ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
+
 
