@@ -163,10 +163,11 @@ legend_html = """
 m.get_root().html.add_child(folium.Element(legend_html))
 
 # Render map
-st_data = st_folium(m, width=600, height=600)
+st_data = st_folium(m, width=800, height=800)
 
 # ======================
 # 4. Show Data
 # ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
+
