@@ -13,14 +13,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Ambil secrets dari Streamlit Cloud
 sa_info = dict(st.secrets["gcp_service_account"])
 sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")
 
 creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
 client = gspread.authorize(creds)
 
-# ID Google Sheet
 SHEET_ID = "1hhr1KjWSAU49wJQhcH_3Js_N8-VQA0WX2fZoGhs3m0w"
 worksheet = client.open_by_key(SHEET_ID).sheet1
 
@@ -29,7 +27,7 @@ data = worksheet.get_all_records()
 df = pd.DataFrame(data)
 df.columns = df.columns.str.strip()
 
-# Ensure numeric coords (X = lat, Y = lon)
+# Ensure numeric coords
 df["X"] = pd.to_numeric(df["X"], errors="coerce")  # latitude
 df["Y"] = pd.to_numeric(df["Y"], errors="coerce")  # longitude
 
@@ -38,7 +36,7 @@ for col, default in [("Panjang Aktual", 0.0), ("Uang Terserap", 0.0), ("Progress
     if col not in df.columns:
         df[col] = default
 
-# Calculate progress: Panjang Aktual / Usulan Panjang
+# Calculate progress
 df["Progress Control"] = (
     df["Panjang Aktual"].astype(float) / df["Usulan Panjang (m)"].replace(0, 1).astype(float)
 ) * 100
@@ -57,10 +55,7 @@ def get_marker_color(progress):
         return "#145214"  # dark green
 
 # ======================
-# 2. Map
-# ======================
-# ======================
-# 2. Map (using ESRI tiles)
+# 2. Map with ESRI Basemaps
 # ======================
 m = folium.Map(
     location=[df["X"].mean(), df["Y"].mean()],  # X = latitude, Y = longitude
@@ -68,21 +63,20 @@ m = folium.Map(
     tiles=None
 )
 
-# Add ESRI basemap
+# Add ESRI basemaps
 folium.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics",
     name="Esri World Imagery"
 ).add_to(m)
 
-# Optionally also add another basemap
 folium.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
     attr="Tiles © Esri — Source: Esri, DeLorme, NAVTEQ",
     name="Esri World Street Map"
 ).add_to(m)
 
-# Add marker points
+# Add markers
 for i, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
         popup_html = f"""
@@ -102,15 +96,40 @@ for i, row in df.iterrows():
             popup=folium.Popup(popup_html, max_width=300),
         ).add_to(m)
 
-# Add layer control to switch basemaps
-folium.LayerControl().add_to(m)
-
 # Add legend
+legend_html = """
+<div style="
+    position: fixed; 
+    bottom: 50px; left: 50px; width: 160px; 
+    background-color: rgba(255,255,255,0.9);
+    border: 1px solid grey; 
+    z-index: 9999; 
+    font-size: 13px;
+    padding: 8px;
+    color: black;
+    border-radius: 5px;
+    ">
+    <b style="font-size:14px;">Progress Legend</b><br>
+    <div style="margin-top:4px; line-height: 18px;">
+        <span style="background:#FF0000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>0–24%<br>
+        <span style="background:#FF8000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>25–49%<br>
+        <span style="background:#FFD700; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>50–74%<br>
+        <span style="background:#7CBE19; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>75–99%<br>
+        <span style="background:#145214; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>100%<br>
+    </div>
+</div>
+"""
 m.get_root().html.add_child(folium.Element(legend_html))
 
-# Render
-st_folium(m, width=600, height=600)
+# Add layer control
+folium.LayerControl().add_to(m)
 
+# Render map
+st_data = st_folium(m, width=800, height=600)
+
+# Quick coordinate preview
+st.write("### Sample Coordinates (first 5 rows)")
+st.dataframe(df[["NAMA KELOMPOK", "X", "Y"]].head())
 
 # ======================
 # 3. User input section
@@ -139,8 +158,8 @@ if selected_kelompok:
             if df.loc[idx, "Usulan Panjang (m)"] > 0 else 0
         )
 
-        # Update hanya baris terkait di Google Sheets
-        row_number = idx + 2  # header = row 1
+        # Update only relevant row in Google Sheets
+        row_number = idx + 2
         worksheet.update_cell(row_number, df.columns.get_loc("Panjang Aktual") + 1, str(panjang_aktual))
         worksheet.update_cell(row_number, df.columns.get_loc("Uang Terserap") + 1, str(uang_terserap))
         worksheet.update_cell(row_number, df.columns.get_loc("Progress Control") + 1, str(df.loc[idx, "Progress Control"]))
@@ -152,4 +171,3 @@ if selected_kelompok:
 # ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
-
