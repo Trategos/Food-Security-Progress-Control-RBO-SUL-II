@@ -1,4 +1,7 @@
+gspread
+google-auth
 streamlit
 pandas
 folium
 streamlit-folium
+
