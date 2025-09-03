@@ -29,7 +29,7 @@ data = worksheet.get_all_records()
 df = pd.DataFrame(data)
 df.columns = df.columns.str.strip()
 
-# Ensure numeric coords
+# Ensure numeric coords (X = lat, Y = lon)
 df["X"] = pd.to_numeric(df["X"], errors="coerce")  # latitude
 df["Y"] = pd.to_numeric(df["Y"], errors="coerce")  # longitude
 
@@ -57,10 +57,10 @@ def get_marker_color(progress):
         return "#145214"  # dark green
 
 # ======================
-# 2. Map (pakai script asli)
+# 2. Map
 # ======================
 m = folium.Map(
-    location=[df["X"].mean(), df["Y"].mean()],
+    location=[df["X"].mean(), df["Y"].mean()],  # X = lat, Y = lon
     zoom_start=12,
     tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attr="© OpenStreetMap contributors"
@@ -69,7 +69,7 @@ m = folium.Map(
 for i, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
         popup_html = f"""
-        <b>Kelompok:</b> {row['NAMA KELOMPOK'] if 'NAMA KELOMPOK' in df.columns else i}<br>
+        <b>Kelompok:</b> {row.get('NAMA KELOMPOK', i)}<br>
         Usulan Panjang (m): {row.get('Usulan Panjang (m)', 0)}<br>
         Kebutuhan Anggaran: {row.get('KEBUTUHAN ANGGARAN', 0)}<br>
         Panjang Aktual: {row.get('Panjang Aktual', 0)}<br>
@@ -77,7 +77,7 @@ for i, row in df.iterrows():
         Progress Control: {row.get('Progress Control', 0):.2f}%
         """
         folium.CircleMarker(
-            location=[row["X"], row["Y"]],
+            location=[row["X"], row["Y"]],  # lat, lon
             radius=7,
             color=get_marker_color(row["Progress Control"]),
             fill=True,
@@ -111,7 +111,7 @@ legend_html = """
 m.get_root().html.add_child(folium.Element(legend_html))
 
 # Render map
-st_data = st_folium(m, width=800, height=600)
+st_folium(m, width=800, height=600)
 
 # ======================
 # 3. User input section
@@ -153,5 +153,3 @@ if selected_kelompok:
 # ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
-
-
