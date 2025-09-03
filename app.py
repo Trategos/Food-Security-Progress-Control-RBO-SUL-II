@@ -2,48 +2,73 @@ import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
+import gspread
+from google.oauth2.service_account import Credentials
 
-# Load CSV
-file_path = "cleaned_data.csv"
-df = pd.read_csv(file_path, delimiter=";")
+# ======================
+# 1. Google Sheets Setup
+# ======================
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# Ambil secrets dari Streamlit Cloud
+sa_info = dict(st.secrets["gcp_service_account"])
+sa_info["private_key"] = sa_info["private_key"].replace("\\n", "\n")  # fix newline
+
+creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+client = gspread.authorize(creds)
+
+# Ganti dengan ID Google Sheet kamu
+SHEET_ID = "1hhr1KjWSAU49wJQhcH_3Js_N8-VQA0WX2fZoGhs3m0w"  
+worksheet = client.open_by_key(SHEET_ID).sheet1
+
+# Load data dari sheet ke DataFrame
+data = worksheet.get_all_records()
+df = pd.DataFrame(data)
 df.columns = df.columns.str.strip()
 
-# Ensure numeric coords
-df["X"] = pd.to_numeric(df["X"], errors="coerce")  # latitude
-df["Y"] = pd.to_numeric(df["Y"], errors="coerce")  # longitude
+# Pastikan numeric coords
+df["X"] = pd.to_numeric(df["X"], errors="coerce")
+df["Y"] = pd.to_numeric(df["Y"], errors="coerce")
 
-# Add new columns if not exist
-if "Panjang Aktual" not in df.columns:
-    df["Panjang Aktual"] = 0
-if "Uang Terserap" not in df.columns:
-    df["Uang Terserap"] = 0
-if "Progress Control" not in df.columns:
-    df["Progress Control"] = 0.0
+# Tambahkan kolom bila belum ada
+for col, default in [("Panjang Aktual", 0), ("Uang Terserap", 0), ("Progress Control", 0.0)]:
+    if col not in df.columns:
+        df[col] = default
 
-# Calculate progress
-df["Progress Control"] = (df["Uang Terserap"] / df["KEBUTUHAN ANGGARAN"].replace(0, 1)) * 100
+# ======================
+# 1. Hitung Progress
+# ======================
+df["Progress Control"] = (
+    df["Panjang Aktual"] / df["Usulan Panjang (m)"].replace(0, 1)
+) * 100
 
-# Function to get marker color
-def get_marker_color(progress):
+# ======================
+# 2. Fungsi utilitas
+# ======================
+def get_marker_color(progress: float) -> str:
     if progress < 25:
-        return "#FF0000"  # red
+        return "#FF0000"
     elif progress < 50:
-        return "#FF8000"  # orange
+        return "#FF8000"
     elif progress < 75:
-        return "#FFD700"  # yellow
+        return "#FFD700"
     elif progress < 100:
-        return "#7CBE19"  # light green
+        return "#7CBE19"
     else:
-        return "#145214FF"  # dark green
+        return "#145214"
 
-# Create map
+# ======================
+# 3. Peta Folium
+# ======================
 m = folium.Map(location=[df["X"].mean(), df["Y"].mean()], zoom_start=12, tiles="OpenStreetMap")
 
-# Add CircleMarkers
-for i, row in df.iterrows():
+for _, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
         popup_html = f"""
-        <b>Kelompok:</b> {row['NAMA KELOMPOK'] if 'NAMA KELOMPOK' in df.columns else i}<br>
+        <b>Kelompok:</b> {row.get('NAMA KELOMPOK', '-') }<br>
         Usulan Panjang (m): {row.get('Usulan Panjang (m)', 0)}<br>
         Kebutuhan Anggaran: {row.get('KEBUTUHAN ANGGARAN', 0)}<br>
         Panjang Aktual: {row.get('Panjang Aktual', 0)}<br>
@@ -59,27 +84,19 @@ for i, row in df.iterrows():
             popup=folium.Popup(popup_html, max_width=300),
         ).add_to(m)
 
-# --- Add Legend with new colors ---
+# Tambah legenda
 legend_html = """
-<div style="
-    position: fixed; 
-    bottom: 50px; left: 50px; width: 160px; 
-    background-color: rgba(255,255,255,0.9);
-    border: 1px solid grey; 
-    z-index: 9999; 
-    font-size: 13px;
-    padding: 8px;
-    color: black;
-    border-radius: 5px;
-    ">
+<div style="position: fixed; bottom: 50px; left: 50px; width: 160px;
+            background-color: rgba(255,255,255,0.9);
+            border: 1px solid grey; border-radius: 5px;
+            z-index: 9999; font-size: 13px;
+            padding: 8px; color: black;">
     <b style="font-size:14px;">Progress Legend</b><br>
-    <div style="margin-top:4px; line-height: 18px;">
-        <span style="background:#FF0000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>0–24%<br>
-        <span style="background:#FF8000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>25–49%<br>
-        <span style="background:#FFD700; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>50–74%<br>
-        <span style="background:#7CBE19; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>75–99%<br>
-        <span style="background:#145214FF; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>100%<br>
-    </div>
+    <span style="background:#FF0000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>0–24%<br>
+    <span style="background:#FF8000; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>25–49%<br>
+    <span style="background:#FFD700; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>50–74%<br>
+    <span style="background:#7CBE19; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>75–99%<br>
+    <span style="background:#145214; display:inline-block; width:12px; height:12px; margin-right:6px;"></span>100%<br>
 </div>
 """
 m.get_root().html.add_child(folium.Element(legend_html))
@@ -87,7 +104,9 @@ m.get_root().html.add_child(folium.Element(legend_html))
 # Render map
 st_data = st_folium(m, width=800, height=600)
 
-# --- User input section ---
+# ======================
+# 4. Input User
+# ======================
 st.write("### Update Data")
 kelompok_list = df["NAMA KELOMPOK"].dropna().unique().tolist()
 selected_kelompok = st.selectbox("Pilih NAMA KELOMPOK", options=kelompok_list)
@@ -95,25 +114,34 @@ selected_kelompok = st.selectbox("Pilih NAMA KELOMPOK", options=kelompok_list)
 if selected_kelompok:
     idx = df[df["NAMA KELOMPOK"] == selected_kelompok].index[0]
 
-    # Non-editable info
+    # Info (read-only)
     st.info(f"Usulan Panjang (m): {df.loc[idx, 'Usulan Panjang (m)']}")
     st.info(f"Kebutuhan Anggaran: {df.loc[idx, 'KEBUTUHAN ANGGARAN']}")
     st.info(f"Progress Control: {df.loc[idx, 'Progress Control']:.2f}%")
 
     # Editable inputs
-    panjang_aktual = st.number_input("Panjang Aktual (m)", value=int(df.loc[idx, "Panjang Aktual"]))
-    uang_terserap = st.number_input("Uang Terserap", value=int(df.loc[idx, "Uang Terserap"]))
+    panjang_aktual = st.number_input("Panjang Aktual (m)", value=float(df.loc[idx, "Panjang Aktual"]), 
+    step=0.1)
+    uang_terserap = st.number_input(
+    "Uang Terserap", 
+    value=float(df.loc[idx, "Uang Terserap"]), 
+    step=1000.0  # misalnya step 1000 untuk rupiah
+    )
 
     if st.button("Simpan Perubahan"):
         df.loc[idx, "Panjang Aktual"] = panjang_aktual
         df.loc[idx, "Uang Terserap"] = uang_terserap
         df.loc[idx, "Progress Control"] = (
-            (uang_terserap / df.loc[idx, "KEBUTUHAN ANGGARAN"]) * 100
-            if df.loc[idx, "KEBUTUHAN ANGGARAN"] > 0 else 0
+            (panjang_aktual / df.loc[idx, "Usulan Panjang (m)"]) * 100
+            if df.loc[idx, "Usulan Panjang (m)"] > 0 else 0
         )
-        df.to_csv(file_path, sep=";", index=False)
+
+        # Simpan balik ke Google Sheets
+        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.success(f"Data untuk kelompok '{selected_kelompok}' berhasil diperbarui!")
 
-# Show the entire updated dataframe
+# ======================
+# 5. Tampilkan Data
+# ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
