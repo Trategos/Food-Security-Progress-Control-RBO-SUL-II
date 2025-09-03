@@ -22,40 +22,38 @@ client = gspread.authorize(creds)
 SHEET_ID = "1hhr1KjWSAU49wJQhcH_3Js_N8-VQA0WX2fZoGhs3m0w"
 worksheet = client.open_by_key(SHEET_ID).sheet1
 
-# Load data
-data = worksheet.get_all_records()
-df = pd.DataFrame(data)
-df.columns = df.columns.str.strip()
-
-# Ensure numeric coords
-df["X"] = pd.to_numeric(df["X"], errors="coerce")  # latitude
-df["Y"] = pd.to_numeric(df["Y"], errors="coerce")  # longitude
-
-# Add new columns if not exist
-for col, default in [("Panjang Aktual", 0.0), ("Uang Terserap", 0.0), ("Progress Control", 0.0)]:
-    if col not in df.columns:
-        df[col] = default
-
-# Calculate progress
-df["Progress Control"] = (
-    df["Panjang Aktual"].astype(float) / df["Usulan Panjang (m)"].replace(0, 1).astype(float)
-) * 100
-
-# Function to get marker color
-def get_marker_color(progress):
-    if progress < 25:
-        return "#FF0000"  # red
-    elif progress < 50:
-        return "#FF8000"  # orange
-    elif progress < 75:
-        return "#FFD700"  # yellow
-    elif progress < 100:
-        return "#7CBE19"  # light green
-    else:
-        return "#145214"  # dark green
 
 # ======================
-# 2. User input section
+# 2. Data Loader (cached 1h)
+# ======================
+@st.cache_data(ttl=3600)  # refresh every 1 hour
+def load_data():
+    data = worksheet.get_all_records()
+    df = pd.DataFrame(data)
+    df.columns = df.columns.str.strip()
+
+    # Ensure numeric coords
+    df["X"] = pd.to_numeric(df["X"], errors="coerce")  # latitude
+    df["Y"] = pd.to_numeric(df["Y"], errors="coerce")  # longitude
+
+    # Add new columns if not exist
+    for col, default in [("Panjang Aktual", 0.0), ("Uang Terserap", 0.0), ("Progress Control", 0.0)]:
+        if col not in df.columns:
+            df[col] = default
+
+    # Calculate progress
+    df["Progress Control"] = (
+        df["Panjang Aktual"].astype(float) / df["Usulan Panjang (m)"].replace(0, 1).astype(float)
+    ) * 100
+
+    return df
+
+
+df = load_data()
+
+
+# ======================
+# 3. User input section
 # ======================
 st.write("### Update Data")
 kelompok_list = df["NAMA KELOMPOK"].dropna().unique().tolist()
@@ -65,12 +63,11 @@ selected_kelompok = st.selectbox("Pilih NAMA KELOMPOK", options=kelompok_list)
 map_center = [df["X"].mean(), df["Y"].mean()]
 map_zoom = 12
 
-# If a Kelompok selected, center map on its location
 if selected_kelompok:
     idx = df[df["NAMA KELOMPOK"] == selected_kelompok].index[0]
     if pd.notnull(df.loc[idx, "X"]) and pd.notnull(df.loc[idx, "Y"]):
         map_center = [df.loc[idx, "X"], df.loc[idx, "Y"]]
-        map_zoom = 16  # zoom in more closely
+        map_zoom = 16  # zoom in closer
 
     # Non-editable info
     st.info(f"Usulan Panjang (m): {df.loc[idx, 'Usulan Panjang (m)']}")
@@ -90,16 +87,34 @@ if selected_kelompok:
         )
 
         # Update Google Sheets row
-        row_number = idx + 2
+        row_number = idx + 2  # +2 for header
         worksheet.update_cell(row_number, df.columns.get_loc("Panjang Aktual") + 1, str(panjang_aktual))
         worksheet.update_cell(row_number, df.columns.get_loc("Uang Terserap") + 1, str(uang_terserap))
         worksheet.update_cell(row_number, df.columns.get_loc("Progress Control") + 1, str(df.loc[idx, "Progress Control"]))
 
+        # Force refresh immediately after saving
+        st.cache_data.clear()
+        df = load_data()
+
         st.success(f"Data untuk kelompok '{selected_kelompok}' berhasil diperbarui!")
 
+
 # ======================
-# 3. Map (OpenStreetMap)
+# 4. Map (OpenStreetMap)
 # ======================
+def get_marker_color(progress):
+    if progress < 25:
+        return "#FF0000"  # red
+    elif progress < 50:
+        return "#FF8000"  # orange
+    elif progress < 75:
+        return "#FFD700"  # yellow
+    elif progress < 100:
+        return "#7CBE19"  # light green
+    else:
+        return "#145214"  # dark green
+
+
 m = folium.Map(
     location=map_center,
     zoom_start=map_zoom,
@@ -107,9 +122,8 @@ m = folium.Map(
     attr="© OpenStreetMap contributors"
 )
 
-bounds = []  # collect all marker coordinates
+bounds = []
 
-# Add markers
 for i, row in df.iterrows():
     if pd.notnull(row["X"]) and pd.notnull(row["Y"]):
         gmaps_url = f"https://www.google.com/maps?q={row['X']},{row['Y']}"
@@ -133,7 +147,7 @@ for i, row in df.iterrows():
 
         bounds.append((row["X"], row["Y"]))
 
-# Auto-fit to all markers if no kelompok selected
+# Fit to all markers if no Kelompok selected
 if not selected_kelompok and bounds:
     m.fit_bounds(bounds)
 
@@ -166,8 +180,7 @@ m.get_root().html.add_child(folium.Element(legend_html))
 st_data = st_folium(m, width=800, height=800)
 
 # ======================
-# 4. Show Data
+# 5. Show Data
 # ======================
 st.write("### Data saat ini")
 st.dataframe(df, use_container_width=True)
-
